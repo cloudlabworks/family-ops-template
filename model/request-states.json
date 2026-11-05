@@ -1,0 +1,25 @@
+{
+  "$comment": "Request lifecycle. scripts/check.mjs asserts that the RequestStatus enum in openapi/openapi.yaml equals 'states' and that every transition names known states. docs/requests.md draws the same machine.",
+  "states": ["new", "seen", "needs_info", "approved", "declined", "done", "expired", "cancelled"],
+  "terminal": ["declined", "done", "expired", "cancelled"],
+  "transitions": [
+    { "from": "new", "to": "seen", "by": "decider", "on": "a decider opens the request" },
+    { "from": ["new", "seen"], "to": "needs_info", "by": "decider", "on": "verdict needs_info" },
+    { "from": "needs_info", "to": "seen", "by": "requester", "on": "requester answers" },
+    { "from": ["new", "seen"], "to": "approved", "by": "decider", "on": "policy either: first approve. policy both: last outstanding decider approves" },
+    { "from": ["new", "seen"], "to": "declined", "by": "decider", "on": "any decider declines (both policies)" },
+    { "from": "approved", "to": "done", "by": "parent-or-requester", "on": "the thing happened" },
+    { "from": ["new", "seen", "needs_info"], "to": "expired", "by": "system", "on": "neededBy passed with no final decision" },
+    { "from": ["new", "seen", "needs_info"], "to": "cancelled", "by": "requester", "on": "requester withdraws" }
+  ],
+  "policies": {
+    "either": "The first eligible decider's approve or decline is final.",
+    "both": "Approved only when every listed decider has approved. Declined as soon as any decider declines."
+  },
+  "rules": [
+    "Each decider may record one verdict per request. A second verdict from the same decider is rejected with 409.",
+    "Deciders are fixed when the request is created (from the routing rules) and stored on the request. Later rule edits do not change open requests.",
+    "A requester is never a decider on their own request.",
+    "A member listed in hiddenFrom never sees the request, its decisions or its audit detail."
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "$comment": "Synthetic catalog. Every entry is opt-in per person; nothing is enabled by default. Licenses of adopted software must be re-checked at adoption.",
+  "apps": [
+    { "id": "my-day", "title": "My day", "does": "Today's events, chores and requests for the signed-in member.", "ageBands": ["adult", "13-17", "8-12"], "choice": "build", "exitTest": "Data is the API's own records; export as JSON.", "tags": ["calendar", "chores"] },
+    { "id": "picture-board", "title": "Picture board", "does": "Today shown as large pictures. Tap a chore card when it is finished; tap a request card to ask a parent for something.", "ageBands": ["under-8"], "choice": "build", "exitTest": "Remove the kiosk enrolment; nothing is stored on the display.", "needsParent": true, "tags": ["kiosk"] },
+    { "id": "family-inbox", "title": "Family inbox", "does": "Ask for something and follow its status; parents decide here.", "ageBands": ["adult", "13-17", "8-12"], "choice": "build", "exitTest": "Requests export as JSON or CSV.", "tags": ["requests"] },
+    { "id": "allowance", "title": "Allowance", "does": "Points earned from checked chores, payouts and balance.", "ageBands": ["adult", "13-17", "8-12"], "choice": "build", "exitTest": "Ledger exports as CSV.", "tags": ["chores"] },
+    { "id": "hub-companion", "title": "Home hub companion app", "does": "House control on a phone for adults, over the private VPN.", "ageBands": ["adult"], "choice": "adopt", "license": "Apache-2.0 (Home Assistant; verify at adoption)", "exitTest": "Hub config is local YAML with its own backups.", "tags": ["house"] },
+    { "id": "media-client", "title": "Media server client", "does": "Watch from the household library under the member's own rating profile and schedule.", "ageBands": ["adult", "13-17", "8-12"], "choice": "adopt", "license": "GPL-2.0 (Jellyfin; verify at adoption)", "exitTest": "Media stays as plain files.", "tags": ["media"] },
+    { "id": "study-timer", "title": "Study timer", "does": "Focus blocks with breaks; finished blocks can count toward a chore.", "ageBands": ["13-17", "8-12"], "choice": "build", "exitTest": "No stored data beyond completed-block counts.", "tags": ["school"] },
+    { "id": "club-tracker", "title": "Club and project tracker", "does": "Meetings, build sessions and a to-do list for a club or hobby project.", "ageBands": ["13-17"], "choice": "build", "exitTest": "A list kind in the API; export as JSON.", "tags": ["activities"] },
+    { "id": "sky-tonight", "title": "Sky tonight", "does": "A curated link to a free planetarium app or site chosen by a parent.", "ageBands": ["8-12", "13-17"], "choice": "adopt", "license": "Depends on the app chosen; verify at adoption", "exitTest": "A link only; no household data leaves.", "needsParent": true, "tags": ["interest"] },
+    { "id": "meal-planner", "title": "Meal planner", "does": "Recipes and the weekly plan, feeding the grocery list.", "ageBands": ["adult", "13-17"], "choice": "adopt", "license": "Self-hosted options exist; verify at adoption", "exitTest": "Recipes export; the plan is also in the API's meal domain.", "tags": ["meals"] }
+  ],
+  "optIns": [
+    { "member": "teen-a", "appId": "club-tracker", "optedInBy": "teen-a", "at": "2030-01-05T17:00:00Z" },
+    { "member": "teen-a", "appId": "my-day", "optedInBy": "teen-a", "at": "2030-01-05T17:01:00Z" },
+    { "member": "kid-a", "appId": "sky-tonight", "optedInBy": "parent-b", "at": "2030-01-06T18:00:00Z" },
+    { "member": "little-a", "appId": "picture-board", "optedInBy": "parent-a", "at": "2030-01-06T18:05:00Z" }
+  ],
+  "suggestions": [
+    { "id": "sug-1", "title": "Chess puzzles", "why": "Daily puzzle with friends from club.", "forMember": "teen-a", "suggestedBy": "teen-a", "requestId": "req-101", "status": "open" },
+    { "id": "sug-2", "title": "Swim lap log", "why": "Track laps before the meet.", "forMember": "kid-a", "suggestedBy": "kid-a", "requestId": "req-102", "status": "open" }
+  ]
+}

@@ -1,0 +1,418 @@
+{
+  "$comment": "Each scenario replays through scripts/request-reducer.mjs and must end in expectStatus. Steps with expectError must be refused with that code.",
+  "scenarios": [
+    {
+      "name": "either policy: first approval decides",
+      "request": {
+        "id": "req-1",
+        "kind": "ride",
+        "title": "Ride to practice Saturday",
+        "requester": "teen-a",
+        "deciders": [
+          "parent-a",
+          "parent-b"
+        ],
+        "policy": "either",
+        "status": "new",
+        "decisions": [],
+        "createdAt": "2030-01-10T09:00:00Z",
+        "revision": 1
+      },
+      "steps": [
+        {
+          "actor": "parent-b",
+          "actorRole": "parent",
+          "action": "open"
+        },
+        {
+          "actor": "parent-b",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "approve"
+        },
+        {
+          "actor": "parent-a",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "decline",
+          "expectError": "illegal-transition"
+        },
+        {
+          "actor": "teen-a",
+          "actorRole": "teen",
+          "action": "complete"
+        }
+      ],
+      "expectStatus": "done"
+    },
+    {
+      "name": "both policy: needs every decider",
+      "request": {
+        "id": "req-2",
+        "kind": "buy",
+        "title": "New headphones",
+        "requester": "teen-a",
+        "deciders": [
+          "parent-a",
+          "parent-b"
+        ],
+        "policy": "both",
+        "status": "new",
+        "decisions": [],
+        "createdAt": "2030-01-10T09:00:00Z",
+        "revision": 1
+      },
+      "steps": [
+        {
+          "actor": "parent-a",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "approve"
+        },
+        {
+          "actor": "parent-a",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "approve",
+          "expectError": "already-decided"
+        },
+        {
+          "actor": "parent-b",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "approve"
+        }
+      ],
+      "expectStatus": "approved"
+    },
+    {
+      "name": "both policy: any decline ends it",
+      "request": {
+        "id": "req-3",
+        "kind": "permission",
+        "title": "Sleepover Friday",
+        "requester": "kid-a",
+        "deciders": [
+          "parent-a",
+          "parent-b"
+        ],
+        "policy": "both",
+        "status": "new",
+        "decisions": [],
+        "createdAt": "2030-01-10T09:00:00Z",
+        "revision": 1
+      },
+      "steps": [
+        {
+          "actor": "parent-a",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "approve"
+        },
+        {
+          "actor": "parent-b",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "decline"
+        }
+      ],
+      "expectStatus": "declined"
+    },
+    {
+      "name": "needs info, answered, then approved",
+      "request": {
+        "id": "req-4",
+        "kind": "idea",
+        "title": "Paint the shed",
+        "requester": "kid-a",
+        "deciders": [
+          "parent-a",
+          "parent-b"
+        ],
+        "policy": "either",
+        "status": "new",
+        "decisions": [],
+        "createdAt": "2030-01-10T09:00:00Z",
+        "revision": 1
+      },
+      "steps": [
+        {
+          "actor": "parent-b",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "needs_info"
+        },
+        {
+          "actor": "parent-a",
+          "actorRole": "parent",
+          "action": "answer",
+          "expectError": "forbidden"
+        },
+        {
+          "actor": "kid-a",
+          "actorRole": "child",
+          "action": "answer"
+        },
+        {
+          "actor": "parent-a",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "approve"
+        }
+      ],
+      "expectStatus": "approved"
+    },
+    {
+      "name": "no service can decide; quick reply needs a signed, verdict-bound callback",
+      "request": {
+        "id": "req-5",
+        "kind": "fix",
+        "title": "Bathroom tap drips",
+        "requester": "teen-a",
+        "deciders": [
+          "parent-a",
+          "parent-b"
+        ],
+        "policy": "either",
+        "status": "new",
+        "decisions": [],
+        "createdAt": "2030-01-10T09:00:00Z",
+        "revision": 1
+      },
+      "steps": [
+        {
+          "actor": "svc-agent",
+          "actorRole": "svc-agent",
+          "action": "decide",
+          "verdict": "approve",
+          "expectError": "forbidden"
+        },
+        {
+          "actor": "svc-agent",
+          "actorRole": "svc-agent",
+          "action": "channel-decide",
+          "decider": "parent-a",
+          "verdict": "approve",
+          "quickReplyEnabled": true,
+          "signatureValid": true,
+          "senderMatches": true,
+          "nonceValid": true,
+          "nonceVerdict": "approve",
+          "expectError": "forbidden"
+        },
+        {
+          "actor": "svc-connector",
+          "actorRole": "svc-connector",
+          "action": "channel-decide",
+          "decider": "parent-a",
+          "verdict": "approve",
+          "quickReplyEnabled": true,
+          "signatureValid": true,
+          "senderMatches": true,
+          "nonceValid": true,
+          "nonceVerdict": "approve",
+          "expectError": "forbidden"
+        },
+        {
+          "actor": "platform",
+          "actorRole": "channel-webhook",
+          "action": "channel-decide",
+          "decider": "parent-a",
+          "verdict": "approve",
+          "quickReplyEnabled": false,
+          "signatureValid": true,
+          "senderMatches": true,
+          "nonceValid": true,
+          "nonceVerdict": "approve",
+          "expectError": "quick-reply-off"
+        },
+        {
+          "actor": "platform",
+          "actorRole": "channel-webhook",
+          "action": "channel-decide",
+          "decider": "parent-a",
+          "verdict": "approve",
+          "quickReplyEnabled": true,
+          "signatureValid": false,
+          "senderMatches": true,
+          "nonceValid": true,
+          "nonceVerdict": "approve",
+          "expectError": "signature-invalid"
+        },
+        {
+          "actor": "platform",
+          "actorRole": "channel-webhook",
+          "action": "channel-decide",
+          "decider": "parent-a",
+          "verdict": "approve",
+          "quickReplyEnabled": true,
+          "signatureValid": true,
+          "senderMatches": false,
+          "nonceValid": true,
+          "nonceVerdict": "approve",
+          "expectError": "sender-mismatch"
+        },
+        {
+          "actor": "platform",
+          "actorRole": "channel-webhook",
+          "action": "channel-decide",
+          "decider": "parent-a",
+          "verdict": "approve",
+          "quickReplyEnabled": true,
+          "signatureValid": true,
+          "senderMatches": true,
+          "nonceValid": true,
+          "nonceVerdict": "decline",
+          "expectError": "nonce-verdict-mismatch"
+        },
+        {
+          "actor": "platform",
+          "actorRole": "channel-webhook",
+          "action": "channel-decide",
+          "decider": "parent-a",
+          "verdict": "approve",
+          "quickReplyEnabled": true,
+          "signatureValid": true,
+          "senderMatches": true,
+          "nonceValid": true,
+          "nonceVerdict": "approve"
+        }
+      ],
+      "expectStatus": "approved"
+    },
+    {
+      "name": "parent request goes to the other parent only",
+      "request": {
+        "id": "req-6",
+        "kind": "buy",
+        "title": "Replace the vacuum",
+        "requester": "parent-a",
+        "deciders": [
+          "parent-b"
+        ],
+        "policy": "either",
+        "status": "new",
+        "decisions": [],
+        "createdAt": "2030-01-10T09:00:00Z",
+        "revision": 1
+      },
+      "steps": [
+        {
+          "actor": "parent-a",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "approve",
+          "expectError": "not-a-decider"
+        },
+        {
+          "actor": "parent-b",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "approve"
+        }
+      ],
+      "expectStatus": "approved"
+    },
+    {
+      "name": "surprise stays hidden from its subject",
+      "request": {
+        "id": "req-7",
+        "kind": "surprise",
+        "title": "Birthday gift for Parent B",
+        "requester": "kid-a",
+        "deciders": [
+          "parent-a"
+        ],
+        "policy": "either",
+        "status": "new",
+        "hiddenFrom": [
+          "parent-b"
+        ],
+        "decisions": [],
+        "createdAt": "2030-01-10T09:00:00Z",
+        "revision": 1
+      },
+      "steps": [
+        {
+          "actor": "parent-b",
+          "actorRole": "parent",
+          "action": "open",
+          "expectError": "not-found"
+        },
+        {
+          "actor": "parent-a",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "approve"
+        }
+      ],
+      "expectStatus": "approved"
+    },
+    {
+      "name": "expires when neededBy passes",
+      "request": {
+        "id": "req-8",
+        "kind": "picture",
+        "title": "Park trip (picture card)",
+        "requester": "little-a",
+        "deciders": [
+          "parent-a",
+          "parent-b"
+        ],
+        "policy": "either",
+        "status": "new",
+        "neededBy": "2030-01-10T12:00:00Z",
+        "decisions": [],
+        "createdAt": "2030-01-10T09:00:00Z",
+        "revision": 1
+      },
+      "steps": [
+        {
+          "actor": "system",
+          "actorRole": "system",
+          "action": "expire"
+        },
+        {
+          "actor": "parent-a",
+          "actorRole": "parent",
+          "action": "decide",
+          "verdict": "approve",
+          "expectError": "illegal-transition"
+        }
+      ],
+      "expectStatus": "expired"
+    },
+    {
+      "name": "requester withdraws",
+      "request": {
+        "id": "req-9",
+        "kind": "buy",
+        "title": "Board game",
+        "requester": "kid-a",
+        "deciders": [
+          "parent-a",
+          "parent-b"
+        ],
+        "policy": "either",
+        "status": "new",
+        "decisions": [],
+        "createdAt": "2030-01-10T09:00:00Z",
+        "revision": 1
+      },
+      "steps": [
+        {
+          "actor": "teen-a",
+          "actorRole": "teen",
+          "action": "cancel",
+          "expectError": "forbidden"
+        },
+        {
+          "actor": "kid-a",
+          "actorRole": "child",
+          "action": "cancel"
+        }
+      ],
+      "expectStatus": "cancelled"
+    }
+  ]
+}

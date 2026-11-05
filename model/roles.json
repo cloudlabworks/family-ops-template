@@ -1,0 +1,234 @@
+{
+  "$comment": "Role matrix: the source of truth for docs/roles.md and for the x-allowed-roles checks in scripts/check.mjs. Access levels: none < read < own < write < relay < full. 'own' means the caller's own objects plus anything shared with them. 'relay' is a service that may create or forward on behalf of a verified person, never decide as one.",
+  "levels": [
+    "none",
+    "read",
+    "own",
+    "write",
+    "relay",
+    "full"
+  ],
+  "roles": {
+    "parent": {
+      "kind": "person",
+      "login": true,
+      "description": "Adult who runs the household. Full access; decides requests; unlocking needs a fresh login."
+    },
+    "teen": {
+      "kind": "person",
+      "login": true,
+      "description": "13 to 17. Own items plus shared family items; creates requests; age-fit self-service."
+    },
+    "child": {
+      "kind": "person",
+      "login": true,
+      "description": "About 8 to 12. Simple views of own items; creates requests; parents opt apps in."
+    },
+    "young-child": {
+      "kind": "person",
+      "login": false,
+      "description": "Under about 8. No login of their own. Uses a kiosk (enrolled display) or is managed entirely by parents."
+    },
+    "visitor": {
+      "kind": "person",
+      "login": true,
+      "description": "Someone who stays on a schedule, such as a relative. Shared items during the visit window only."
+    },
+    "guest": {
+      "kind": "person",
+      "login": false,
+      "description": "Anyone else in the house. Reads nothing. Guest network only."
+    },
+    "kiosk": {
+      "kind": "device",
+      "login": false,
+      "description": "An enrolled display that serves one member. Has its own revocable credential. A network address never counts as authorization."
+    },
+    "svc-agent": {
+      "kind": "service",
+      "login": false,
+      "description": "A chat or voice assistant. Creates and reads for a verified sender with that sender's rights. Cannot decide requests."
+    },
+    "svc-connector": {
+      "kind": "service",
+      "login": false,
+      "description": "The home connector. Dials out, claims commands, writes state snapshots. Cannot decide requests."
+    },
+    "channel-webhook": {
+      "kind": "channel",
+      "login": false,
+      "description": "A messaging platform's signed button callback, verified by the API itself. Only for opt-in quick replies to decision cards."
+    }
+  },
+  "domains": {
+    "calendar": {
+      "parent": "full",
+      "teen": "own",
+      "child": "read",
+      "young-child": "none",
+      "visitor": "read",
+      "guest": "none",
+      "kiosk": "read",
+      "svc-agent": "relay",
+      "svc-connector": "read",
+      "channel-webhook": "none"
+    },
+    "chores": {
+      "parent": "full",
+      "teen": "own",
+      "child": "own",
+      "young-child": "none",
+      "visitor": "none",
+      "guest": "none",
+      "kiosk": "own",
+      "svc-agent": "read",
+      "svc-connector": "read",
+      "channel-webhook": "none"
+    },
+    "meals": {
+      "parent": "full",
+      "teen": "write",
+      "child": "write",
+      "young-child": "none",
+      "visitor": "write",
+      "guest": "none",
+      "kiosk": "write",
+      "svc-agent": "write",
+      "svc-connector": "read",
+      "channel-webhook": "none"
+    },
+    "activities": {
+      "parent": "full",
+      "teen": "own",
+      "child": "read",
+      "young-child": "none",
+      "visitor": "none",
+      "guest": "none",
+      "kiosk": "none",
+      "svc-agent": "read",
+      "svc-connector": "none",
+      "channel-webhook": "none"
+    },
+    "house": {
+      "parent": "full",
+      "teen": "own",
+      "child": "none",
+      "young-child": "none",
+      "visitor": "none",
+      "guest": "none",
+      "kiosk": "none",
+      "svc-agent": "read",
+      "svc-connector": "none",
+      "channel-webhook": "none"
+    },
+    "media": {
+      "parent": "full",
+      "teen": "own",
+      "child": "read",
+      "young-child": "none",
+      "visitor": "none",
+      "guest": "none",
+      "kiosk": "read",
+      "svc-agent": "none",
+      "svc-connector": "none",
+      "channel-webhook": "none"
+    },
+    "gaming": {
+      "parent": "full",
+      "teen": "own",
+      "child": "own",
+      "young-child": "none",
+      "visitor": "none",
+      "guest": "none",
+      "kiosk": "none",
+      "svc-agent": "none",
+      "svc-connector": "none",
+      "channel-webhook": "none"
+    },
+    "requests": {
+      "parent": "full",
+      "teen": "own",
+      "child": "own",
+      "young-child": "none",
+      "visitor": "own",
+      "guest": "none",
+      "kiosk": "own",
+      "svc-agent": "relay",
+      "svc-connector": "none",
+      "channel-webhook": "relay"
+    },
+    "apps": {
+      "parent": "full",
+      "teen": "own",
+      "child": "own",
+      "young-child": "none",
+      "visitor": "none",
+      "guest": "none",
+      "kiosk": "none",
+      "svc-agent": "none",
+      "svc-connector": "none",
+      "channel-webhook": "none"
+    },
+    "devices": {
+      "parent": "full",
+      "teen": "own",
+      "child": "read",
+      "young-child": "none",
+      "visitor": "none",
+      "guest": "none",
+      "kiosk": "none",
+      "svc-agent": "none",
+      "svc-connector": "none",
+      "channel-webhook": "none"
+    },
+    "audit": {
+      "parent": "read",
+      "teen": "none",
+      "child": "none",
+      "young-child": "none",
+      "visitor": "none",
+      "guest": "none",
+      "kiosk": "none",
+      "svc-agent": "none",
+      "svc-connector": "none",
+      "channel-webhook": "none"
+    },
+    "household": {
+      "parent": "full",
+      "teen": "read",
+      "child": "read",
+      "young-child": "none",
+      "visitor": "none",
+      "guest": "none",
+      "kiosk": "none",
+      "svc-agent": "read",
+      "svc-connector": "read",
+      "channel-webhook": "none"
+    },
+    "connector": {
+      "parent": "read",
+      "teen": "none",
+      "child": "none",
+      "young-child": "none",
+      "visitor": "none",
+      "guest": "none",
+      "kiosk": "none",
+      "svc-agent": "none",
+      "svc-connector": "full",
+      "channel-webhook": "none"
+    }
+  },
+  "requiredDomains": [
+    "calendar",
+    "chores",
+    "meals",
+    "activities",
+    "house",
+    "media",
+    "gaming",
+    "requests",
+    "apps",
+    "devices",
+    "audit"
+  ]
+}

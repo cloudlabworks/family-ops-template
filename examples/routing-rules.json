@@ -1,0 +1,11 @@
+{
+  "rules": [
+    { "fromRole": "teen", "kind": "ride", "deciders": ["parent-a", "parent-b"], "policy": "either" },
+    { "fromRole": "teen", "kind": "buy", "deciders": ["parent-a", "parent-b"], "policy": "both" },
+    { "fromRole": "child", "kind": "permission", "deciders": ["parent-a", "parent-b"], "policy": "both" },
+    { "fromMember": "parent-a", "deciders": ["parent-b"], "policy": "either" },
+    { "fromMember": "parent-b", "deciders": ["parent-a"], "policy": "either" }
+  ],
+  "default": { "deciders": ["parent-a", "parent-b"], "policy": "either" },
+  "revision": 1
+}

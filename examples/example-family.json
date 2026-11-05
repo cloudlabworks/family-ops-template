@@ -1,0 +1,16 @@
+{
+  "id": "example-household",
+  "name": "The Example Household",
+  "timezone": "Etc/UTC",
+  "members": [
+    { "id": "parent-a", "displayName": "Parent A", "role": "parent", "ageBand": "adult", "residency": "resident", "profile": "enabled" },
+    { "id": "parent-b", "displayName": "Parent B", "role": "parent", "ageBand": "adult", "residency": "resident", "profile": "enabled" },
+    { "id": "teen-a", "displayName": "Teen A", "role": "teen", "ageBand": "13-17", "residency": "resident", "profile": "enabled", "interests": ["robotics", "chess"] },
+    { "id": "kid-a", "displayName": "Kid A", "role": "child", "ageBand": "8-12", "residency": "resident", "profile": "enabled", "interests": ["astronomy", "swimming"] },
+    { "id": "little-a", "displayName": "Little A", "role": "young-child", "ageBand": "under-8", "residency": "resident", "profile": "enabled", "interests": ["animals"] },
+    {
+      "id": "visitor-a", "displayName": "Grandparent A", "role": "visitor", "ageBand": "adult", "residency": "visiting", "profile": "disabled",
+      "visitSchedule": [ { "from": "2030-07-01", "to": "2030-07-14" } ]
+    }
+  ]
+}

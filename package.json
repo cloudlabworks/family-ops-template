@@ -1,0 +1,21 @@
+{
+  "name": "family-ops-template",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Blueprint for a private household API: OpenAPI spec, role matrix, request state machine and self-service catalog. Not a deployed service.",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "lint:openapi": "redocly lint openapi/openapi.yaml",
+    "check:model": "node scripts/check.mjs",
+    "check:privacy": "node scripts/privacy-scan.mjs",
+    "check": "npm run lint:openapi && npm run check:model && npm run check:privacy"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.75.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "yaml": "2.9.1"
+  }
+}

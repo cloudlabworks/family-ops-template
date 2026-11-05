@@ -1,0 +1,2193 @@
+openapi: 3.1.0
+info:
+  title: Family Ops API (blueprint)
+  version: 0.1.0
+  summary: A household API blueprint for calendar, chores, meals, activities, house automation, media, gaming, requests, self-service apps, devices and audit.
+  description: |
+    **Blueprint only. Nothing here is deployed.** This spec describes a private household API that a
+    family runs for itself. It is a design to copy and adapt, not a hosted service.
+
+    Design rules that every operation follows:
+
+    - **Authentication is not authorization.** The identity layer in front of the API (an
+      identity-aware proxy or OIDC) proves who is calling. The API then authorizes every object on
+      the server: ownership, the member a kiosk is bound to, the deciders stored on a request, and
+      legal state transitions. `x-allowed-roles` on each operation is the coarse gate; the operation
+      description states the per-object rule.
+    - **No service identity can act as a parent.** Service tokens create and read for a verified person.
+      Parents decide in their own session; the only other path is an opt-in, platform-signed quick reply
+      that no household service can produce (see `channelDecision`).
+    - **The home side never listens to the internet.** A connector inside the home dials out, claims
+      commands and pushes state snapshots (`connector` tag). Remote admin of home services uses a
+      private mesh VPN, never a public tunnel.
+    - **Writes are optimistic.** Mutable objects carry `revision`; a stale revision returns 409.
+    - **Every write is audited.**
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: https://family.example.invalid/v1
+    description: Placeholder. Replace with your own private hostname behind your identity layer.
+security:
+  - identitySession: []
+tags:
+  - name: calendar
+    description: Family events with people labels, ICS feeds and display mirroring.
+  - name: chores
+    description: Chores, done marks, parent checks and an allowance ledger.
+  - name: meals
+    description: Shared lists (grocery, to-do, packing) and the meal plan.
+  - name: activities
+    description: School and activity schedules, forms due and pickups. Store schedules, not school records.
+  - name: house
+    description: Intents for a home-automation hub (scenes, climate, lights, locks, cameras state, energy). The API never drives devices directly.
+  - name: media
+    description: What is playing, casting and age-appropriate libraries on a self-hosted media server.
+  - name: gaming
+    description: Play windows, today's usage and bonus-time requests. Enforcement depends on each platform; see docs/gaming-platforms.md.
+  - name: requests
+    description: The family inbox. Anyone asks; parents decide with an either or both policy.
+  - name: apps
+    description: Per-person opt-in self-service catalog and the suggestion list.
+  - name: devices
+    description: Device inventory, schedules, lost-device actions and kiosk enrolment.
+  - name: audit
+    description: Append-only record of who did what.
+  - name: household
+    description: Members, roles and residency (supporting).
+  - name: connector
+    description: Outbound-only home connector (supporting).
+
+paths:
+  /household:
+    get:
+      tags: [household]
+      operationId: getHousehold
+      summary: Household settings
+      x-allowed-roles: [parent, teen, child, svc-agent, svc-connector]
+      security:
+        - identitySession: []
+        - serviceToken: []
+      description: Non-parents receive the member directory only (ids, display names, roles), never schedules or opt-ins of others.
+      responses:
+        "200":
+          description: Household
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Household" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /household/members/{memberId}:
+    parameters:
+      - $ref: "#/components/parameters/memberId"
+    get:
+      tags: [household]
+      operationId: getMember
+      summary: One member
+      x-allowed-roles: [parent, teen, child]
+      description: Parents read any member. Teens and children read their own full record and the directory entry of others.
+      responses:
+        "200":
+          description: Member
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [household]
+      operationId: updateMember
+      summary: Update role, residency or profile state
+      x-allowed-roles: [parent]
+      description: Parents only. A member's profile stays `disabled` until a parent enables it; disabled members appear in no view and receive no notifications.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MemberPatch" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Member" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /calendar/events:
+    get:
+      tags: [calendar]
+      operationId: listEvents
+      summary: List events
+      x-allowed-roles: [parent, teen, child, visitor, kiosk, svc-agent, svc-connector]
+      security:
+        - identitySession: []
+        - deviceSession: []
+        - serviceToken: []
+      description: |
+        Per-object rule: parents see all; teens and children see events where they are in `who` or that are `shared`;
+        visitors see shared events inside their visit window; a kiosk sees today's events for its bound member;
+        services never see `private` events. Events whose `hiddenFrom` contains the caller are omitted.
+      parameters:
+        - { name: who, in: query, schema: { type: string }, description: Filter by member id. }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events: { type: array, items: { $ref: "#/components/schemas/Event" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [calendar]
+      operationId: createEvent
+      summary: Create an event
+      x-allowed-roles: [parent, teen, svc-agent]
+      security:
+        - identitySession: []
+        - serviceToken: []
+      description: Teens may create events only where `who` is themselves. A service creates on behalf of a verified sender (`onBehalfOf`), with that sender's rights, never more.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Event" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /calendar/events/{eventId}:
+    parameters:
+      - $ref: "#/components/parameters/eventId"
+    get:
+      tags: [calendar]
+      operationId: getEvent
+      summary: One event
+      x-allowed-roles: [parent, teen, child, visitor]
+      description: Same visibility rule as listEvents.
+      responses:
+        "200":
+          description: Event
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Event" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [calendar]
+      operationId: updateEvent
+      summary: Replace an event
+      x-allowed-roles: [parent, teen]
+      description: Teens may edit only events they created for themselves. Requires the current `revision`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EventInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Event" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [calendar]
+      operationId: deleteEvent
+      summary: Delete an event
+      x-allowed-roles: [parent, teen]
+      description: Teens may delete only events they created for themselves.
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /calendar/feeds/{memberId}.ics:
+    parameters:
+      - $ref: "#/components/parameters/memberId"
+    get:
+      tags: [calendar]
+      operationId: getMemberFeed
+      summary: ICS feed for one member
+      x-allowed-roles: [parent, teen, svc-connector]
+      security:
+        - identitySession: []
+        - serviceToken: []
+      description: Parents read any feed; teens only their own. The connector reads feeds to mirror non-private events to a shared wall display.
+      responses:
+        "200":
+          description: iCalendar
+          content:
+            text/calendar:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /chores:
+    get:
+      tags: [chores]
+      operationId: listChores
+      summary: List chores
+      x-allowed-roles: [parent, teen, child, kiosk, svc-agent, svc-connector]
+      security:
+        - identitySession: []
+        - deviceSession: []
+        - serviceToken: []
+      description: Parents see all. Teens, children and kiosks see chores assigned to themselves (kiosk = its bound member).
+      parameters:
+        - { name: who, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Chores
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chores]
+                properties:
+                  chores: { type: array, items: { $ref: "#/components/schemas/Chore" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [chores]
+      operationId: createChore
+      summary: Define a chore
+      x-allowed-roles: [parent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChoreInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Chore" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /chores/{choreId}:
+    parameters:
+      - $ref: "#/components/parameters/choreId"
+    put:
+      tags: [chores]
+      operationId: updateChore
+      summary: Replace a chore
+      x-allowed-roles: [parent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChoreInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Chore" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [chores]
+      operationId: deleteChore
+      summary: Retire a chore
+      x-allowed-roles: [parent]
+      responses:
+        "204": { description: Retired }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /chores/{choreId}/marks:
+    parameters:
+      - $ref: "#/components/parameters/choreId"
+    post:
+      tags: [chores]
+      operationId: markChoreDone
+      summary: Mark a chore done
+      x-allowed-roles: [parent, teen, child, kiosk]
+      security:
+        - identitySession: []
+        - deviceSession: []
+      description: The caller (or a kiosk's bound member) must be the assignee. Parents may mark on anyone's behalf.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [date]
+              properties:
+                date: { type: string, format: date }
+                note: { type: string, maxLength: 280 }
+      responses:
+        "201":
+          description: Marked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChoreMark" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /chores/{choreId}/marks/{markId}/check:
+    parameters:
+      - $ref: "#/components/parameters/choreId"
+      - { name: markId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [chores]
+      operationId: checkChoreMark
+      summary: Parent confirms a done mark
+      x-allowed-roles: [parent]
+      description: Confirmation credits any allowance points attached to the chore.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accepted]
+              properties:
+                accepted: { type: boolean }
+                note: { type: string, maxLength: 280 }
+      responses:
+        "200":
+          description: Checked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChoreMark" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /allowance/{memberId}:
+    parameters:
+      - $ref: "#/components/parameters/memberId"
+    get:
+      tags: [chores]
+      operationId: getAllowance
+      summary: Allowance ledger for one member
+      x-allowed-roles: [parent, teen, child]
+      description: Teens and children read only their own ledger.
+      responses:
+        "200":
+          description: Ledger
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, balance]
+                properties:
+                  balance: { type: number }
+                  entries: { type: array, items: { $ref: "#/components/schemas/AllowanceEntry" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [chores]
+      operationId: addAllowanceEntry
+      summary: Add a ledger entry (earned, paid, adjustment)
+      x-allowed-roles: [parent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AllowanceEntry" }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AllowanceEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /lists:
+    get:
+      tags: [meals]
+      operationId: listLists
+      summary: Shared lists
+      x-allowed-roles: [parent, teen, child, visitor, kiosk, svc-agent, svc-connector]
+      security:
+        - identitySession: []
+        - deviceSession: []
+        - serviceToken: []
+      responses:
+        "200":
+          description: Lists
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lists]
+                properties:
+                  lists: { type: array, items: { $ref: "#/components/schemas/List" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /lists/{listId}/items:
+    parameters:
+      - $ref: "#/components/parameters/listId"
+    get:
+      tags: [meals]
+      operationId: listItems
+      summary: Items on a list
+      x-allowed-roles: [parent, teen, child, visitor, kiosk, svc-agent, svc-connector]
+      security:
+        - identitySession: []
+        - deviceSession: []
+        - serviceToken: []
+      responses:
+        "200":
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ListItem" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [meals]
+      operationId: addListItem
+      summary: Add an item
+      x-allowed-roles: [parent, teen, child, visitor, kiosk, svc-agent]
+      security:
+        - identitySession: []
+        - deviceSession: []
+        - serviceToken: []
+      description: A kiosk adds items by picture only (`pictureId`, no free text). A service adds on behalf of a verified sender.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ListItemInput" }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /lists/{listId}/items/{itemId}:
+    parameters:
+      - $ref: "#/components/parameters/listId"
+      - { name: itemId, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [meals]
+      operationId: updateListItem
+      summary: Tick off or edit an item
+      x-allowed-roles: [parent, teen, child, visitor]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                done: { type: boolean }
+                text: { type: string, maxLength: 200 }
+                revision: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListItem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /meals:
+    get:
+      tags: [meals]
+      operationId: getMealWeek
+      summary: Meal plan for a week
+      x-allowed-roles: [parent, teen, child, visitor, svc-agent]
+      security:
+        - identitySession: []
+        - serviceToken: []
+      parameters:
+        - { name: week, in: query, required: true, schema: { type: string, pattern: "^[0-9]{4}-W[0-9]{2}$" }, description: "ISO week, for example 2030-W05." }
+      responses:
+        "200":
+          description: Week
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [days]
+                properties:
+                  days: { type: array, items: { $ref: "#/components/schemas/MealDay" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /meals/{date}:
+    parameters:
+      - { name: date, in: path, required: true, schema: { type: string, format: date } }
+    put:
+      tags: [meals]
+      operationId: setMealDay
+      summary: Set a day's meals
+      x-allowed-roles: [parent, teen]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MealDay" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MealDay" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /activities:
+    get:
+      tags: [activities]
+      operationId: listActivities
+      summary: School and activity schedule
+      x-allowed-roles: [parent, teen, child, svc-agent]
+      security:
+        - identitySession: []
+        - serviceToken: []
+      description: Teens and children see their own activities. Activities are also calendar events (same record, `kind` label), never copies.
+      parameters:
+        - { name: who, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Activities
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [activities]
+                properties:
+                  activities: { type: array, items: { $ref: "#/components/schemas/Activity" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [activities]
+      operationId: createActivity
+      summary: Add an activity or a form-due reminder
+      x-allowed-roles: [parent, teen]
+      description: Teens add activities only for themselves.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivityInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Activity" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /activities/{activityId}:
+    parameters:
+      - { name: activityId, in: path, required: true, schema: { type: string } }
+    put:
+      tags: [activities]
+      operationId: updateActivity
+      summary: Replace an activity
+      x-allowed-roles: [parent, teen]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ActivityInput" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Activity" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [activities]
+      operationId: deleteActivity
+      summary: Delete an activity
+      x-allowed-roles: [parent, teen]
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /pickups:
+    get:
+      tags: [activities]
+      operationId: listPickups
+      summary: Pickups and drop-offs for a day
+      x-allowed-roles: [parent, teen, svc-agent]
+      security:
+        - identitySession: []
+        - serviceToken: []
+      parameters:
+        - { name: date, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: Pickups
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pickups]
+                properties:
+                  pickups: { type: array, items: { $ref: "#/components/schemas/Pickup" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /pickups/{pickupId}/claim:
+    parameters:
+      - { name: pickupId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [activities]
+      operationId: claimPickup
+      summary: A parent takes a pickup
+      x-allowed-roles: [parent]
+      responses:
+        "200":
+          description: Claimed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Pickup" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /house/state:
+    get:
+      tags: [house]
+      operationId: getHouseState
+      summary: Latest house snapshot
+      x-allowed-roles: [parent, teen]
+      description: From the connector's last snapshot (`asOf` shows its age). Teens receive only their own room and the shared scene list. Camera entries carry state only, never images.
+      responses:
+        "200":
+          description: Snapshot
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HouseState" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /house/scenes:
+    get:
+      tags: [house]
+      operationId: listScenes
+      summary: Scenes the caller may run
+      x-allowed-roles: [parent, teen, svc-agent]
+      security:
+        - identitySession: []
+        - serviceToken: []
+      responses:
+        "200":
+          description: Scenes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scenes]
+                properties:
+                  scenes: { type: array, items: { $ref: "#/components/schemas/Scene" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /house/scenes/{sceneId}/run:
+    parameters:
+      - { name: sceneId, in: path, required: true, schema: { type: string, examples: [movie-night, bedtime, away, morning] } }
+    post:
+      tags: [house]
+      operationId: runScene
+      summary: Queue a scene
+      x-allowed-roles: [parent, teen]
+      description: Teens may run scenes whose `allowedRoles` include teen. Writes a command for the connector; returns 202 with the command id. Scenes never unlock doors.
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Command" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /house/climate/{zoneId}:
+    parameters:
+      - { name: zoneId, in: path, required: true, schema: { type: string } }
+    put:
+      tags: [house]
+      operationId: setClimate
+      summary: Change a zone target temperature inside the limits parents chose
+      x-allowed-roles: [parent, teen]
+      description: Teens may set only the zone mapped to their own room, and only inside the zone's bounds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClimateSetpoint" }
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Command" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /house/lights/{roomId}:
+    parameters:
+      - { name: roomId, in: path, required: true, schema: { type: string } }
+    put:
+      tags: [house]
+      operationId: setLights
+      summary: Set a room's lights
+      x-allowed-roles: [parent, teen]
+      description: Teens may change only their own room.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [on]
+              properties:
+                on: { type: boolean }
+                brightnessPct: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Command" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /house/locks/{lockId}:
+    parameters:
+      - { name: lockId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [house]
+      operationId: commandLock
+      summary: Lock or unlock (step-up required to unlock)
+      x-allowed-roles: [parent]
+      description: Parents only, never a service or kiosk. `unlock` requires a step-up token from `POST /auth/step-up` issued in the last 5 minutes to the same parent. Every attempt is audited, including refusals.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LockCommand" }
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Command" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /auth/step-up:
+    post:
+      tags: [house]
+      operationId: stepUp
+      summary: Get a short-lived step-up token
+      x-allowed-roles: [parent]
+      description: Requires an identity assertion younger than 5 minutes (fresh login). Returns a one-time token bound to this parent, valid 5 minutes.
+      responses:
+        "201":
+          description: Token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [stepUpToken, expiresAt]
+                properties:
+                  stepUpToken: { type: string }
+                  expiresAt: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /house/cameras:
+    get:
+      tags: [house]
+      operationId: listCameras
+      summary: Camera state (armed, last motion), no images
+      x-allowed-roles: [parent]
+      description: Video and stills stay inside the home on the hub. This API carries state only.
+      responses:
+        "200":
+          description: Cameras
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cameras]
+                properties:
+                  cameras: { type: array, items: { $ref: "#/components/schemas/CameraState" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /house/energy:
+    get:
+      tags: [house]
+      operationId: getEnergy
+      summary: Energy use by period
+      x-allowed-roles: [parent]
+      parameters:
+        - { name: range, in: query, schema: { type: string, enum: [day, week, month, year] } }
+      responses:
+        "200":
+          description: Report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnergyReport" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /media/now-playing:
+    get:
+      tags: [media]
+      operationId: getNowPlaying
+      summary: What is playing on each screen
+      x-allowed-roles: [parent, teen]
+      description: Teens see their own sessions and shared screens.
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions: { type: array, items: { $ref: "#/components/schemas/MediaSession" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /media/cast:
+    post:
+      tags: [media]
+      operationId: castMedia
+      summary: Cast an item to a screen
+      x-allowed-roles: [parent, teen]
+      description: The item must be in a library the caller's media profile can see, and the screen must be on the caller's allowed list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CastRequest" }
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Command" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /media/libraries:
+    get:
+      tags: [media]
+      operationId: listLibraries
+      summary: Libraries visible to a profile
+      x-allowed-roles: [parent, teen, child, kiosk]
+      security:
+        - identitySession: []
+        - deviceSession: []
+      description: Each member maps to a media-server profile with a maximum rating, allowed libraries and an access schedule. Non-parents see only their own profile's libraries.
+      responses:
+        "200":
+          description: Libraries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [libraries]
+                properties:
+                  libraries: { type: array, items: { $ref: "#/components/schemas/Library" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /media/watch-requests:
+    post:
+      tags: [media]
+      operationId: requestTitle
+      summary: Ask for a title to be added
+      x-allowed-roles: [parent, teen, child]
+      description: Creates a request of kind `media` routed to parents (see requests).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, maxLength: 200 }
+                note: { type: string, maxLength: 500 }
+      responses:
+        "201":
+          description: Request created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Request" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /gaming/platforms:
+    get:
+      tags: [gaming]
+      operationId: listGamingPlatforms
+      summary: What each platform lets the household enforce
+      x-allowed-roles: [parent]
+      description: Static capability matrix (see docs/gaming-platforms.md). `enforcement` is `api` only where an integration can set limits; otherwise `manual`, and the API sends the parent a reminder instead of claiming enforcement.
+      responses:
+        "200":
+          description: Platforms
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [platforms]
+                properties:
+                  platforms: { type: array, items: { $ref: "#/components/schemas/GamingPlatform" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /gaming/{memberId}/today:
+    parameters:
+      - $ref: "#/components/parameters/memberId"
+    get:
+      tags: [gaming]
+      operationId: getGamingToday
+      summary: Today's window and usage for a player
+      x-allowed-roles: [parent, teen, child]
+      description: Players read only their own. Usage is present only where a platform integration reports it.
+      responses:
+        "200":
+          description: Today
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GamingToday" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /gaming/{memberId}/windows:
+    parameters:
+      - $ref: "#/components/parameters/memberId"
+    get:
+      tags: [gaming]
+      operationId: getGamingWindows
+      summary: Weekly play windows
+      x-allowed-roles: [parent, teen, child]
+      responses:
+        "200":
+          description: Windows
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GamingWindows" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      tags: [gaming]
+      operationId: setGamingWindows
+      summary: Set weekly play windows
+      x-allowed-roles: [parent]
+      description: Where `enforcement` is `api` the connector applies it; elsewhere the parent gets a checklist to apply in the platform's own app.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GamingWindows" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GamingWindows" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /gaming/bonus-requests:
+    post:
+      tags: [gaming]
+      operationId: requestBonusTime
+      summary: Ask for bonus time
+      x-allowed-roles: [teen, child]
+      description: Creates a request of kind `bonus-time` for the caller, routed to parents.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [minutes]
+              properties:
+                minutes: { type: integer, minimum: 5, maximum: 240 }
+                reason: { type: string, maxLength: 280 }
+      responses:
+        "201":
+          description: Request created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Request" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /requests:
+    get:
+      tags: [requests]
+      operationId: listRequests
+      summary: List requests
+      x-allowed-roles: [parent, teen, child, visitor, kiosk, svc-agent]
+      security:
+        - identitySession: []
+        - deviceSession: []
+        - serviceToken: []
+      description: |
+        Per-object rule: parents see requests where they are a decider or which are routed to all parents;
+        everyone else sees only requests they created (a kiosk: its bound member's). A service sees only
+        requests where its verified sender is the requester or a decider. Anything whose `hiddenFrom` contains
+        the caller is omitted entirely.
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/RequestStatus" } }
+        - { name: decider, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Requests
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requests]
+                properties:
+                  requests: { type: array, items: { $ref: "#/components/schemas/Request" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [requests]
+      operationId: createRequest
+      summary: Ask for something
+      x-allowed-roles: [parent, teen, child, visitor, kiosk, svc-agent]
+      security:
+        - identitySession: []
+        - deviceSession: []
+        - serviceToken: []
+      description: |
+        The server sets `requester` from the caller (a kiosk: its bound member; a service: the verified
+        sender in `onBehalfOf`). Deciders and policy come from the routing rules and are frozen on the
+        request. A kiosk files kind `picture` only. Parents filing a `surprise` set `hiddenFrom`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RequestInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Request" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /requests/{requestId}:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    get:
+      tags: [requests]
+      operationId: getRequest
+      summary: One request with its decisions
+      x-allowed-roles: [parent, teen, child, visitor, kiosk, svc-agent]
+      security:
+        - identitySession: []
+        - deviceSession: []
+        - serviceToken: []
+      description: Same visibility rule as listRequests. Opening it as a decider moves `new` to `seen`.
+      responses:
+        "200":
+          description: Request
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Request" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /requests/{requestId}/decisions:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    post:
+      tags: [requests]
+      operationId: decideRequest
+      summary: A parent decides, in their own session
+      x-allowed-roles: [parent]
+      description: |
+        Server-side checks, in order: the caller is one of the request's frozen `deciders`; the caller is not
+        the requester; the caller has not already decided (409); the request is in `new` or `seen`; the
+        revision matches. The resulting status follows the request's policy (`either` or `both`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DecisionInput" }
+      responses:
+        "200":
+          description: Decision recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Request" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /requests/{requestId}/channel-decisions:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    post:
+      tags: [requests]
+      operationId: channelDecision
+      summary: Optional quick reply from a messaging platform (off by default)
+      x-allowed-roles: [channel-webhook]
+      security:
+        - channelSignature: []
+      description: |
+        Default: a decision card carries links that open the parent's own signed-in page, and decideRequest
+        records the verdict under the parent's identity. No service can decide.
+
+        Quick reply is an opt-in (`Household.settings.quickReplyDecisions`). When it is on, the messaging
+        platform posts each button callback **directly to this endpoint**; no assistant or connector sits
+        in between, and neither can call it. The API accepts the callback only when all of these hold:
+        1. the platform's signature over the raw callback verifies with a key only the API holds;
+        2. the platform-verified sender id equals the decider's enrolled channel identity;
+        3. `nonce` is the unused, unexpired one-time value minted for this request, this decider and this
+           verdict (every button has its own nonce, so a Decline press can never be replayed as Approve);
+        4. every decideRequest check passes for that decider.
+        The verdict is stored with `via: channel` and the evidence. Remaining risk: whoever controls the
+        parent's messaging account can press the buttons. Keep quick reply off for kinds you treat as
+        high-stakes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChannelDecision" }
+      responses:
+        "200":
+          description: Decision recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Request" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /requests/{requestId}/info:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    post:
+      tags: [requests]
+      operationId: answerRequestInfo
+      summary: The requester answers a needs_info question
+      x-allowed-roles: [teen, child, visitor, parent]
+      description: Only the requester. Moves `needs_info` back to `seen`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answer]
+              properties:
+                answer: { type: string, maxLength: 1000 }
+      responses:
+        "200":
+          description: Answered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Request" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /requests/{requestId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    post:
+      tags: [requests]
+      operationId: cancelRequest
+      summary: The requester withdraws
+      x-allowed-roles: [parent, teen, child, visitor, kiosk]
+      security:
+        - identitySession: []
+        - deviceSession: []
+      description: Only the requester (a kiosk for its bound member), and only before a final decision.
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Request" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /requests/{requestId}/complete:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    post:
+      tags: [requests]
+      operationId: completeRequest
+      summary: Mark an approved request done
+      x-allowed-roles: [parent, teen, child, visitor]
+      description: A decider or the requester, only from `approved`.
+      responses:
+        "200":
+          description: Done
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Request" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /requests/routing-rules:
+    get:
+      tags: [requests]
+      operationId: getRoutingRules
+      summary: Who decides what
+      x-allowed-roles: [parent]
+      responses:
+        "200":
+          description: Rules
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutingRules" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      tags: [requests]
+      operationId: setRoutingRules
+      summary: Replace the routing rules
+      x-allowed-roles: [parent]
+      description: Applies to new requests only; open requests keep the deciders frozen at creation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RoutingRules" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RoutingRules" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /apps/catalog:
+    get:
+      tags: [apps]
+      operationId: getAppCatalog
+      summary: The household's app catalog
+      x-allowed-roles: [parent, teen, child]
+      description: Non-parents see only entries whose age band fits them.
+      responses:
+        "200":
+          description: Catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apps]
+                properties:
+                  apps: { type: array, items: { $ref: "#/components/schemas/CatalogApp" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /members/{memberId}/apps:
+    parameters:
+      - $ref: "#/components/parameters/memberId"
+    get:
+      tags: [apps]
+      operationId: listMemberApps
+      summary: A member's opted-in apps (their home screen)
+      x-allowed-roles: [parent, teen, child]
+      description: Members read their own list; parents read any.
+      responses:
+        "200":
+          description: Opt-ins
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [optIns]
+                properties:
+                  optIns: { type: array, items: { $ref: "#/components/schemas/AppOptIn" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /members/{memberId}/apps/{appId}:
+    parameters:
+      - $ref: "#/components/parameters/memberId"
+      - { name: appId, in: path, required: true, schema: { type: string } }
+    put:
+      tags: [apps]
+      operationId: optInApp
+      summary: Opt in to a catalog app
+      x-allowed-roles: [parent, teen]
+      description: Teens opt themselves in to age-fit entries without approval unless the entry has `needsParent`. Children's opt-ins are made by a parent. Nothing is enabled for anyone by default.
+      responses:
+        "200":
+          description: Opted in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppOptIn" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [apps]
+      operationId: optOutApp
+      summary: Opt out
+      x-allowed-roles: [parent, teen, child]
+      description: Any member can opt themselves out at any time.
+      responses:
+        "204": { description: Opted out }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /apps/suggestions:
+    get:
+      tags: [apps]
+      operationId: listAppSuggestions
+      summary: The suggestion list
+      x-allowed-roles: [parent, teen, child]
+      description: Parents see all suggestions; others see their own.
+      responses:
+        "200":
+          description: Suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [suggestions]
+                properties:
+                  suggestions: { type: array, items: { $ref: "#/components/schemas/AppSuggestion" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [apps]
+      operationId: suggestApp
+      summary: Suggest an app
+      x-allowed-roles: [parent, teen, child]
+      description: Creates a suggestion and a request of kind `app` routed to parents. On approval a parent adds it to the catalog.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AppSuggestionInput" }
+      responses:
+        "201":
+          description: Suggested
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppSuggestion" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /devices:
+    get:
+      tags: [devices]
+      operationId: listDevices
+      summary: Device inventory
+      x-allowed-roles: [parent, teen, child]
+      description: Teens and children see their own devices only.
+      responses:
+        "200":
+          description: Devices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices: { type: array, items: { $ref: "#/components/schemas/Device" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [devices]
+      operationId: addDevice
+      summary: Register a device
+      x-allowed-roles: [parent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeviceInput" }
+      responses:
+        "201":
+          description: Added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Device" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /devices/{deviceId}/schedule:
+    parameters:
+      - $ref: "#/components/parameters/deviceId"
+    put:
+      tags: [devices]
+      operationId: setDeviceSchedule
+      summary: Network schedule for a device
+      x-allowed-roles: [parent]
+      description: Applied by the connector to a DNS filter's per-client rules where supported. Platform screen-time settings are manual (see docs/gaming-platforms.md).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeviceSchedule" }
+      responses:
+        "202":
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Command" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /devices/{deviceId}/lost:
+    parameters:
+      - $ref: "#/components/parameters/deviceId"
+    post:
+      tags: [devices]
+      operationId: reportLost
+      summary: Report a device lost
+      x-allowed-roles: [parent, teen]
+      description: |
+        Teens may report their own devices. Effect: revoke every session and kiosk credential issued to the
+        device, unpair any chat identity enrolled from it, and open a parent checklist (vendor lock or erase).
+        No secret lives on a device, so nothing on it needs rotating.
+      responses:
+        "200":
+          description: Revoked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Device" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /devices/{deviceId}/enrolment:
+    parameters:
+      - $ref: "#/components/parameters/deviceId"
+    post:
+      tags: [devices]
+      operationId: enrolKiosk
+      summary: Enrol a display as a kiosk for one member
+      x-allowed-roles: [parent]
+      description: Returns a one-time enrolment code the parent enters on the display; the display trades it for its own credential, limited to the kiosk routes of the member it serves. Network address is never used as authorization.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [boundMember]
+              properties:
+                boundMember: { type: string }
+      responses:
+        "201":
+          description: Enrolment code
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrolmentCode, expiresAt]
+                properties:
+                  enrolmentCode: { type: string }
+                  expiresAt: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    delete:
+      tags: [devices]
+      operationId: revokeKiosk
+      summary: Revoke a kiosk credential
+      x-allowed-roles: [parent]
+      responses:
+        "204": { description: Revoked }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /audit:
+    get:
+      tags: [audit]
+      operationId: listAudit
+      summary: Audit log
+      x-allowed-roles: [parent]
+      description: Append-only; no write or delete route exists. Entries about requests hidden from the caller show only that an entry exists.
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { name: actor, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries]
+                properties:
+                  entries: { type: array, items: { $ref: "#/components/schemas/AuditEntry" } }
+                  nextCursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /connector/commands:
+    get:
+      tags: [connector]
+      operationId: claimCommands
+      summary: Claim queued commands (outbound pull)
+      x-allowed-roles: [svc-connector]
+      security:
+        - serviceToken: []
+      description: The connector inside the home calls out to claim work. Claimed commands are leased for 60 seconds.
+      parameters:
+        - { name: max, in: query, schema: { type: integer, minimum: 1, maximum: 50 } }
+      responses:
+        "200":
+          description: Commands
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [commands]
+                properties:
+                  commands: { type: array, items: { $ref: "#/components/schemas/Command" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /connector/commands/{commandId}/result:
+    parameters:
+      - { name: commandId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [connector]
+      operationId: reportCommandResult
+      summary: Report a command's outcome
+      x-allowed-roles: [svc-connector]
+      security:
+        - serviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ok]
+              properties:
+                ok: { type: boolean }
+                detail: { type: string, maxLength: 500 }
+      responses:
+        "200":
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Command" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /connector/snapshots/{target}:
+    parameters:
+      - { name: target, in: path, required: true, schema: { type: string, enum: [house, media, gaming, devices] } }
+    put:
+      tags: [connector]
+      operationId: putSnapshot
+      summary: Push a state snapshot
+      x-allowed-roles: [svc-connector]
+      security:
+        - serviceToken: []
+      description: State only. The API rejects payloads containing image or video data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [asOf, state]
+              properties:
+                asOf: { type: string, format: date-time }
+                state: { type: object }
+      responses:
+        "204": { description: Stored }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /connector/status:
+    get:
+      tags: [connector]
+      operationId: getConnectorStatus
+      summary: Connector health for parents
+      x-allowed-roles: [parent]
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [lastSeen, queued]
+                properties:
+                  lastSeen: { type: [string, "null"], format: date-time }
+                  queued: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+components:
+  securitySchemes:
+    identitySession:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Signed identity assertion from your identity-aware proxy or OIDC provider. The API verifies signature, audience and expiry, then maps the subject to a member. Authentication only.
+    deviceSession:
+      type: http
+      scheme: bearer
+      description: Per-device kiosk credential from enrolKiosk, bound to one member, revocable.
+    serviceToken:
+      type: http
+      scheme: bearer
+      description: Service identity (svc-agent or svc-connector). Never sufficient to act as a parent.
+    channelSignature:
+      type: apiKey
+      in: header
+      name: X-Channel-Signature
+      description: Signature the messaging platform puts on each callback, verified by the API with a key no household service holds. Used only by channelDecision.
+
+  parameters:
+    memberId: { name: memberId, in: path, required: true, schema: { type: string } }
+    eventId: { name: eventId, in: path, required: true, schema: { type: string } }
+    choreId: { name: choreId, in: path, required: true, schema: { type: string } }
+    listId: { name: listId, in: path, required: true, schema: { type: string } }
+    requestId: { name: requestId, in: path, required: true, schema: { type: string } }
+    deviceId: { name: deviceId, in: path, required: true, schema: { type: string } }
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: No valid identity
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: Authenticated, but not allowed for this object
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: Not found (also returned for objects hidden from the caller)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: Stale revision, duplicate decision or illegal state transition
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required: [title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+
+    Role:
+      type: string
+      enum: [parent, teen, child, young-child, visitor, guest]
+    Household:
+      type: object
+      required: [id, name, timezone, members]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        timezone: { type: string, examples: [Etc/UTC] }
+        settings:
+          type: object
+          properties:
+            quickReplyDecisions: { type: boolean, default: false, description: "Allow platform-signed quick replies (channelDecision). Off by default." }
+        members: { type: array, items: { $ref: "#/components/schemas/Member" } }
+    Member:
+      type: object
+      required: [id, displayName, role, residency, profile]
+      properties:
+        id: { type: string, pattern: "^[a-z0-9-]{2,40}$" }
+        displayName: { type: string, maxLength: 60 }
+        role: { $ref: "#/components/schemas/Role" }
+        ageBand: { type: string, enum: [adult, "13-17", "8-12", under-8] }
+        residency: { type: string, enum: [resident, visiting] }
+        visitSchedule:
+          type: array
+          description: Visit windows for visiting members (dates only, no locations).
+          items:
+            type: object
+            required: [from, to]
+            properties:
+              from: { type: string, format: date }
+              to: { type: string, format: date }
+        profile:
+          type: string
+          enum: [disabled, enabled]
+          description: Disabled until a parent enables it. Disabled members appear in no view.
+        coOwners:
+          type: array
+          description: "Parents who jointly own this member's profile. Each one can switch it off, fix entries or erase them."
+          items: { type: string }
+        interests:
+          type: array
+          description: Optional tags the member (or a parent, for young children) chose, used only to suggest catalog apps.
+          items: { type: string, maxLength: 40 }
+    MemberPatch:
+      type: object
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+        residency: { type: string, enum: [resident, visiting] }
+        profile: { type: string, enum: [disabled, enabled] }
+        revision: { type: integer, minimum: 1 }
+
+    EventInput:
+      type: object
+      required: [title, start, end, who]
+      properties:
+        title: { type: string, maxLength: 200 }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        allDay: { type: boolean, default: false }
+        timezone: { type: string }
+        who: { type: array, items: { type: string }, minItems: 1 }
+        shared: { type: boolean, default: true }
+        private: { type: boolean, default: false, description: Never shown on shared displays or to services. }
+        hiddenFrom: { type: array, items: { type: string } }
+        kind: { type: string, examples: [family, activity, travel, appointment] }
+        labels: { type: array, items: { type: string } }
+        location: { type: string, maxLength: 200 }
+        notes: { type: string, maxLength: 4000 }
+        onBehalfOf: { type: string, description: Services only; the verified sender. }
+        revision: { type: integer, minimum: 1 }
+    Event:
+      allOf:
+        - $ref: "#/components/schemas/EventInput"
+        - type: object
+          required: [id, revision, createdBy, updatedAt]
+          properties:
+            id: { type: string }
+            revision: { type: integer }
+            createdBy: { type: string }
+            updatedAt: { type: string, format: date-time }
+
+    ChoreInput:
+      type: object
+      required: [title, assignees, cadence]
+      properties:
+        title: { type: string, maxLength: 120 }
+        pictureId: { type: string, description: Icon for picture boards. }
+        assignees: { type: array, items: { type: string }, minItems: 1 }
+        cadence: { type: string, enum: [daily, weekdays, weekly, once] }
+        points: { type: integer, minimum: 0 }
+        revision: { type: integer, minimum: 1 }
+    Chore:
+      allOf:
+        - $ref: "#/components/schemas/ChoreInput"
+        - type: object
+          required: [id, active]
+          properties:
+            id: { type: string }
+            active: { type: boolean }
+    ChoreMark:
+      type: object
+      required: [id, choreId, who, date, doneAt]
+      properties:
+        id: { type: string }
+        choreId: { type: string }
+        who: { type: string }
+        date: { type: string, format: date }
+        doneAt: { type: string, format: date-time }
+        checkedBy: { type: [string, "null"] }
+        accepted: { type: [boolean, "null"] }
+    AllowanceEntry:
+      type: object
+      required: [kind, amount, at]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [earned, paid, adjustment] }
+        amount: { type: number, description: In the household's own unit (points or currency). }
+        at: { type: string, format: date-time }
+        note: { type: string, maxLength: 280 }
+
+    List:
+      type: object
+      required: [id, kind, title]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [grocery, todo, packing] }
+        title: { type: string }
+    ListItemInput:
+      type: object
+      properties:
+        text: { type: string, maxLength: 200 }
+        pictureId: { type: string }
+        onBehalfOf: { type: string }
+      oneOf:
+        - required: [text]
+        - required: [pictureId]
+    ListItem:
+      type: object
+      required: [id, addedBy, addedAt, done, revision]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        pictureId: { type: string }
+        addedBy: { type: string }
+        addedAt: { type: string, format: date-time }
+        done: { type: boolean }
+        revision: { type: integer }
+    MealDay:
+      type: object
+      required: [date]
+      properties:
+        date: { type: string, format: date }
+        breakfast: { type: string, maxLength: 120 }
+        lunch: { type: string, maxLength: 120 }
+        dinner: { type: string, maxLength: 120 }
+        recipeUrl: { type: string, format: uri }
+        revision: { type: integer, minimum: 1 }
+
+    ActivityInput:
+      type: object
+      required: [who, title, kind]
+      properties:
+        who: { type: string }
+        title: { type: string, maxLength: 120 }
+        kind: { type: string, enum: [school-day, practice, game, lesson, club, form-due, other] }
+        recurrence: { type: string, description: RFC 5545 RRULE. }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        due: { type: string, format: date }
+        needsPickup: { type: boolean, default: false }
+        revision: { type: integer, minimum: 1 }
+    Activity:
+      allOf:
+        - $ref: "#/components/schemas/ActivityInput"
+        - type: object
+          required: [id, eventId]
+          properties:
+            id: { type: string }
+            eventId: { type: string, description: "The calendar event that is this activity (one record, not a copy)." }
+    Pickup:
+      type: object
+      required: [id, who, at, kind]
+      properties:
+        id: { type: string }
+        who: { type: string }
+        at: { type: string, format: date-time }
+        kind: { type: string, enum: [pickup, drop-off] }
+        claimedBy: { type: [string, "null"] }
+
+    HouseState:
+      type: object
+      required: [asOf, rooms]
+      properties:
+        asOf: { type: string, format: date-time }
+        rooms:
+          type: array
+          items:
+            type: object
+            required: [id, name]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              lightsOn: { type: boolean }
+              temperatureC: { type: number }
+              setpointC: { type: number }
+        locks:
+          type: array
+          items:
+            type: object
+            required: [id, state]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              state: { type: string, enum: [locked, unlocked, jammed, unknown] }
+    Scene:
+      type: object
+      required: [id, name, allowedRoles]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        allowedRoles: { type: array, items: { $ref: "#/components/schemas/Role" } }
+    ClimateSetpoint:
+      type: object
+      required: [setpointC]
+      properties:
+        setpointC: { type: number, minimum: 10, maximum: 30 }
+        hold: { type: string, enum: [until-next-schedule, one-hour, permanent] }
+    LockCommand:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [lock, unlock] }
+        stepUpToken: { type: string, description: Required for unlock. }
+    CameraState:
+      type: object
+      required: [id, armed]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        armed: { type: boolean }
+        lastMotionAt: { type: [string, "null"], format: date-time }
+    EnergyReport:
+      type: object
+      required: [range, points]
+      properties:
+        range: { type: string }
+        unit: { type: string, examples: [kWh] }
+        points:
+          type: array
+          items:
+            type: object
+            required: [at, value]
+            properties:
+              at: { type: string, format: date-time }
+              value: { type: number }
+    Command:
+      type: object
+      required: [id, target, intent, status, createdBy, createdAt]
+      properties:
+        id: { type: string }
+        target: { type: string, enum: [hub, media, display, dns, gaming] }
+        intent: { type: object, description: "Typed intent, for example {\"scene\": \"bedtime\"}. Never a raw hub service call." }
+        status: { type: string, enum: [queued, leased, done, failed] }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        result: { type: [string, "null"] }
+
+    MediaSession:
+      type: object
+      required: [screen, state]
+      properties:
+        screen: { type: string }
+        state: { type: string, enum: [playing, paused, idle] }
+        title: { type: string }
+        profile: { type: string }
+    CastRequest:
+      type: object
+      required: [itemId, screen]
+      properties:
+        itemId: { type: string }
+        screen: { type: string }
+    Library:
+      type: object
+      required: [id, name, maxRating]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        maxRating: { type: string, examples: [G, PG, PG-13, TV-Y7] }
+        schedule: { type: string, description: "Access window enforced by the media server, for example 07:00-20:00." }
+
+    GamingPlatform:
+      type: object
+      required: [id, enforcement, reads]
+      properties:
+        id: { type: string, examples: [steam, nintendo-switch, xbox, apple-screen-time, playstation] }
+        enforcement: { type: string, enum: [api, manual] }
+        reads: { type: string, enum: [usage, presence, none] }
+        note: { type: string }
+    GamingWindows:
+      type: object
+      required: [member, windows]
+      properties:
+        member: { type: string }
+        windows:
+          type: array
+          items:
+            type: object
+            required: [day, from, to]
+            properties:
+              day: { type: string, enum: [mon, tue, wed, thu, fri, sat, sun] }
+              from: { type: string, pattern: "^[0-2][0-9]:[0-5][0-9]$" }
+              to: { type: string, pattern: "^[0-2][0-9]:[0-5][0-9]$" }
+        dailyMinutes: { type: integer, minimum: 0 }
+        revision: { type: integer, minimum: 1 }
+    GamingToday:
+      type: object
+      required: [member, window]
+      properties:
+        member: { type: string }
+        window: { type: string }
+        minutesUsed: { type: [integer, "null"], description: Null where no platform reports usage. }
+        minutesLeft: { type: [integer, "null"] }
+
+    RequestStatus:
+      type: string
+      enum: [new, seen, needs_info, approved, declined, done, expired, cancelled]
+    RequestKind:
+      type: string
+      enum: [app, bonus-time, buy, fix, idea, media, permission, picture, ride, surprise]
+    RequestInput:
+      type: object
+      required: [kind, title]
+      properties:
+        kind: { $ref: "#/components/schemas/RequestKind" }
+        title: { type: string, maxLength: 200 }
+        details: { type: string, maxLength: 2000 }
+        neededBy: { type: string, format: date-time }
+        hiddenFrom: { type: array, items: { type: string }, description: For surprises. Hidden members never see the request. }
+        onBehalfOf: { type: string, description: Services only; the verified sender. }
+    Decision:
+      type: object
+      required: [decider, verdict, at, via]
+      properties:
+        decider: { type: string }
+        verdict: { type: string, enum: [approve, decline, needs_info] }
+        at: { type: string, format: date-time }
+        via: { type: string, enum: [session, channel] }
+        note: { type: string, maxLength: 500 }
+        evidence: { $ref: "#/components/schemas/ChannelEvidence" }
+    Request:
+      type: object
+      required: [id, kind, title, requester, deciders, policy, status, createdAt, revision, decisions]
+      properties:
+        id: { type: string }
+        kind: { $ref: "#/components/schemas/RequestKind" }
+        title: { type: string }
+        details: { type: string }
+        requester: { type: string }
+        deciders: { type: array, items: { type: string }, minItems: 1, description: Frozen at creation from the routing rules. }
+        policy: { type: string, enum: [either, both] }
+        status: { $ref: "#/components/schemas/RequestStatus" }
+        neededBy: { type: [string, "null"], format: date-time }
+        hiddenFrom: { type: array, items: { type: string } }
+        decisions: { type: array, items: { $ref: "#/components/schemas/Decision" } }
+        createdAt: { type: string, format: date-time }
+        revision: { type: integer }
+    DecisionInput:
+      type: object
+      required: [verdict, revision]
+      properties:
+        verdict: { type: string, enum: [approve, decline, needs_info] }
+        note: { type: string, maxLength: 500 }
+        revision: { type: integer, minimum: 1 }
+    ChannelEvidence:
+      type: object
+      required: [channel, senderId, messageId]
+      properties:
+        channel: { type: string, examples: [chat-bot, sms] }
+        senderId: { type: string, description: "Sender id from the platform's signed callback, checked against the decider's enrolled channel identity. Trusted only because the API verified the platform signature itself." }
+        messageId: { type: string }
+    ChannelDecision:
+      type: object
+      required: [decider, verdict, nonce, channelEvidence]
+      properties:
+        decider: { type: string }
+        verdict: { type: string, enum: [approve, decline, needs_info] }
+        nonce: { type: string, description: "One-time value minted by the API for this request, this decider and this verdict." }
+        channelEvidence: { $ref: "#/components/schemas/ChannelEvidence" }
+    RoutingRules:
+      type: object
+      required: [rules, default]
+      properties:
+        rules:
+          type: array
+          items:
+            type: object
+            required: [deciders, policy]
+            properties:
+              fromRole: { $ref: "#/components/schemas/Role" }
+              fromMember: { type: string }
+              kind: { $ref: "#/components/schemas/RequestKind" }
+              deciders: { type: array, items: { type: string }, minItems: 1 }
+              policy: { type: string, enum: [either, both] }
+        default:
+          type: object
+          required: [deciders, policy]
+          properties:
+            deciders: { type: array, items: { type: string }, minItems: 1 }
+            policy: { type: string, enum: [either, both] }
+        revision: { type: integer, minimum: 1 }
+
+    CatalogApp:
+      type: object
+      required: [id, title, does, ageBands, choice, exitTest]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        does: { type: string }
+        ageBands: { type: array, items: { type: string, enum: [adult, "13-17", "8-12", under-8] } }
+        choice: { type: string, enum: [adopt, build] }
+        license: { type: string, description: For adopted software; verify at adoption. }
+        exitTest: { type: string, description: How the household leaves without losing data. }
+        needsParent: { type: boolean, default: false }
+        tags: { type: array, items: { type: string } }
+    AppOptIn:
+      type: object
+      required: [member, appId, optedInBy, at]
+      properties:
+        member: { type: string }
+        appId: { type: string }
+        optedInBy: { type: string }
+        at: { type: string, format: date-time }
+    AppSuggestionInput:
+      type: object
+      required: [title, why]
+      properties:
+        title: { type: string, maxLength: 120 }
+        url: { type: string, format: uri }
+        why: { type: string, maxLength: 500 }
+        forMember: { type: string }
+    AppSuggestion:
+      allOf:
+        - $ref: "#/components/schemas/AppSuggestionInput"
+        - type: object
+          required: [id, suggestedBy, requestId, status]
+          properties:
+            id: { type: string }
+            suggestedBy: { type: string }
+            requestId: { type: string }
+            status: { type: string, enum: [open, added, declined] }
+
+    DeviceInput:
+      type: object
+      required: [owner, kind, platform]
+      properties:
+        owner: { type: string }
+        kind: { type: string, enum: [phone, tablet, laptop, console, tv, display, other] }
+        platform: { type: string }
+        label: { type: string, maxLength: 60 }
+    Device:
+      allOf:
+        - $ref: "#/components/schemas/DeviceInput"
+        - type: object
+          required: [id, state]
+          properties:
+            id: { type: string }
+            state: { type: string, enum: [active, lost, retired] }
+            kioskBoundMember: { type: [string, "null"] }
+    DeviceSchedule:
+      type: object
+      required: [blocks]
+      properties:
+        blocks:
+          type: array
+          items:
+            type: object
+            required: [days, from, to]
+            properties:
+              days: { type: array, items: { type: string, enum: [mon, tue, wed, thu, fri, sat, sun] } }
+              from: { type: string, pattern: "^[0-2][0-9]:[0-5][0-9]$" }
+              to: { type: string, pattern: "^[0-2][0-9]:[0-5][0-9]$" }
+              services: { type: array, items: { type: string }, description: Services to block in the window; empty means all internet. }
+
+    AuditEntry:
+      type: object
+      required: [at, actor, actorKind, operationId, outcome]
+      properties:
+        at: { type: string, format: date-time }
+        actor: { type: string }
+        actorKind: { type: string, enum: [person, device, service] }
+        operationId: { type: string }
+        targetId: { type: [string, "null"] }
+        outcome: { type: string, enum: [ok, refused, error] }
+        via: { type: string, enum: [session, channel, device, service] }
