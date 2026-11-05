@@ -1,3 +1,11 @@
 node_modules/
 .DS_Store
 *.log
+.venv/
+__pycache__/
+*.sqlite*
+data/
+dist/
+.env
+
+.venv312/

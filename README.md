@@ -1,13 +1,14 @@
 # family-ops-template
 
-**A blueprint for a private household API.** Calendar, chores and allowance, groceries and meals, school
-and activities, house automation, TV and media, gaming, a family requests inbox, per-person self-service
-apps, devices and screen time, and an audit log.
+**A self-hosted household requests and approvals API, plus a broader Family Ops blueprint.**
 
-> **Status: blueprint, not a deployed service.** This repository holds a validated OpenAPI 3.1 spec, a
-> role matrix, a request state machine with an executable reference reducer, a synthetic example
-> household, and docs. It contains no server and no real household data. Build it privately, behind your
-> own identity layer.
+Version 0.2.0 runs the request → parent approval → recorded outcome workflow with persistent storage, individual authentication and an audit trail. [Self-hosting quickstart](docs/self-hosting.md) · [Runtime OpenAPI](openapi/runtime.yaml) · [Release notes](RELEASE-NOTES.md).
+
+The original 74-operation design covers calendar, chores, meals, activities, home automation, media, gaming and more. **Those broader domains remain a blueprint, not implemented services.** No real household data is included. No public hosted instance or universal parental-control enforcement is claimed.
+
+## Broader blueprint architecture
+
+The diagram below includes planned components, not just the v0.2.0 runtime.
 
 ```mermaid
 flowchart LR
@@ -23,9 +24,14 @@ Full diagram and component choices: [docs/architecture.md](docs/architecture.md)
 
 ## What is in here
 
+- `server/`: runnable Flask/Gunicorn request service and operator/client commands.
+- `compose.yaml` and `Dockerfile`: private self-host deployment.
+- `openapi/runtime.yaml`: implemented API surface only.
+- `tests/`: authorization, workflow, persistence and backup tests.
+
 | Path | What |
 |---|---|
-| [`openapi/openapi.yaml`](openapi/openapi.yaml) | The API: 74 operations across calendar, chores, meals, activities, house, media, gaming, requests, apps, devices and audit, plus household and connector support routes |
+| [`openapi/openapi.yaml`](openapi/openapi.yaml) | The broader design: 74 operations across calendar, chores, meals, activities, house, media, gaming, requests, apps, devices and audit, plus household and connector support routes |
 | [`model/roles.json`](model/roles.json) | Role matrix (source of truth); rendered in [docs/roles.md](docs/roles.md) |
 | [`model/request-states.json`](model/request-states.json) | Request lifecycle, either and both decision policies |
 | [`scripts/request-reducer.mjs`](scripts/request-reducer.mjs) | Executable reference for the request state machine |
@@ -58,7 +64,7 @@ matrix, checks the docs table against the matrix, validates the examples against
 replays the request scenarios through the reducer, and runs a generic privacy scan. CI runs the same, plus
 gitleaks over the full history, OSV-Scanner and CodeQL.
 
-## Build it
+## Extend the blueprint
 
 Start with [docs/implementation-guide.md](docs/implementation-guide.md). Suggested order: requests inbox,
 calendar, chores and lists first; the home hub and connector next; gaming and device schedules last.

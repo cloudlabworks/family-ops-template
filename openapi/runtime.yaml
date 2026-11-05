@@ -1,0 +1,796 @@
+openapi: 3.1.0
+info:
+  title: Family Ops Requests API
+  version: 0.2.0
+  description: Runnable single-household subset. Person sessions only; no service
+    delegation, kiosk or channel decisions. All other blueprint domains are not
+    implemented.
+  license:
+    name: MIT
+    identifier: MIT
+servers:
+  - url: http://localhost:8080/v1
+security:
+  - personSession: []
+tags:
+  - name: requests
+    description: The family inbox. Anyone asks; parents decide with an either or
+      both policy.
+  - name: audit
+    description: Append-only record of who did what.
+paths:
+  /requests:
+    get:
+      tags:
+        - requests
+      operationId: listRequests
+      summary: List requests
+      x-allowed-roles:
+        - parent
+        - teen
+        - child
+      description: Requester and frozen parent deciders only; hidden requests omitted.
+        Offset cursor applies after visibility filtering.
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/RequestStatus"
+        - name: decider
+          in: query
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+      responses:
+        "200":
+          description: Requests
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - requests
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Request"
+                  nextCursor:
+                    type:
+                      - string
+                      - "null"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - requests
+      operationId: createRequest
+      summary: Ask for something
+      x-allowed-roles:
+        - parent
+        - teen
+        - child
+      description: Server derives requester from the authenticated person. Routing is
+        frozen at creation. Only parents may hide surprise requests. No
+        onBehalfOf support.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RequestInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Request"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /requests/{requestId}:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    get:
+      tags:
+        - requests
+      operationId: getRequest
+      summary: One request with its decisions
+      x-allowed-roles:
+        - parent
+        - teen
+        - child
+      description: Same visibility as listing. Decider opening a new request changes
+        it to seen and increments revision.
+      responses:
+        "200":
+          description: Request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Request"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /requests/{requestId}/decisions:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    post:
+      tags:
+        - requests
+      operationId: decideRequest
+      summary: A parent decides, in their own session
+      x-allowed-roles:
+        - parent
+      description: >
+        Server-side checks, in order: the caller is one of the request's frozen
+        `deciders`; the caller is not
+
+        the requester; the caller has not already decided (409); the request is
+        in `new` or `seen`; the
+
+        revision matches. The resulting status follows the request's policy
+        (`either` or `both`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DecisionInput"
+      responses:
+        "200":
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Request"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /requests/{requestId}/complete:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    post:
+      tags:
+        - requests
+      operationId: completeRequest
+      summary: complete a request
+      description: "Requires the current revision. Answer/cancel: requester only.
+        Complete: requester or frozen parent decider, approved state only."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Mutation"
+      responses:
+        "200":
+          description: Updated request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Request"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /requests/routing-rules:
+    get:
+      tags:
+        - requests
+      operationId: getRoutingRules
+      summary: Who decides what
+      x-allowed-roles:
+        - parent
+      responses:
+        "200":
+          description: Rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingRules"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags:
+        - requests
+      operationId: setRoutingRules
+      summary: Replace the routing rules
+      x-allowed-roles:
+        - parent
+      description: Applies to new requests only; open requests keep the deciders
+        frozen at creation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoutingRules"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingRules"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /audit:
+    get:
+      tags:
+        - audit
+      operationId: listAudit
+      summary: Audit log
+      x-allowed-roles:
+        - parent
+      description: Append-only; no write or delete route exists. Entries about
+        requests hidden from the caller show only that an entry exists.
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - entries
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      oneOf:
+                        - $ref: "#/components/schemas/AuditEntry"
+                        - type: object
+                          required:
+                            - id
+                            - redacted
+                          properties:
+                            id:
+                              type: integer
+                            redacted:
+                              const: true
+                  nextCursor:
+                    type:
+                      - string
+                      - "null"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /requests/{requestId}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    post:
+      tags:
+        - requests
+      operationId: cancelRequest
+      summary: cancel a request
+      description: "Requires the current revision. Answer/cancel: requester only.
+        Complete: requester or frozen parent decider, approved state only."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Mutation"
+      responses:
+        "200":
+          description: Updated request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Request"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /requests/{requestId}/answer:
+    parameters:
+      - $ref: "#/components/parameters/requestId"
+    post:
+      tags:
+        - requests
+      operationId: answerRequest
+      summary: answer a request
+      description: "Requires the current revision. Answer/cancel: requester only.
+        Complete: requester or frozen parent decider, approved state only."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Answer"
+      responses:
+        "200":
+          description: Updated request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Request"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /auth/login:
+    post:
+      operationId: login
+      summary: Start an individual session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - username
+                - password
+              properties:
+                username:
+                  type: string
+                  maxLength: 64
+                password:
+                  type: string
+                  format: password
+                  maxLength: 256
+      responses:
+        "200":
+          description: Opaque session; never persist or log the raw token
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - accessToken
+                  - tokenType
+                  - expiresIn
+                properties:
+                  accessToken:
+                    type: string
+                  tokenType:
+                    const: Bearer
+                  expiresIn:
+                    const: 3600
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          description: Ten login attempts per remote address per minute
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke this session
+      responses:
+        "204":
+          description: Revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /me:
+    get:
+      operationId: getMe
+      summary: Authenticated member ID and role
+      responses:
+        "200":
+          description: Identity
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+components:
+  securitySchemes:
+    personSession:
+      type: http
+      scheme: bearer
+      description: Opaque one-hour token returned by POST /auth/login; maps to one
+        enabled person. Never trust caller-supplied role headers.
+  parameters:
+    requestId:
+      name: requestId
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: No valid identity
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: Authenticated, but not allowed for this object
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Not found (also returned for objects hidden from the caller)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: Stale revision, duplicate decision or illegal state transition
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required:
+        - title
+        - status
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+    Role:
+      type: string
+      enum:
+        - parent
+        - teen
+        - child
+    RequestStatus:
+      type: string
+      enum:
+        - new
+        - seen
+        - needs_info
+        - approved
+        - declined
+        - done
+        - expired
+        - cancelled
+    RequestKind:
+      type: string
+      enum:
+        - app
+        - bonus-time
+        - buy
+        - fix
+        - idea
+        - media
+        - permission
+        - picture
+        - ride
+        - surprise
+    RequestInput:
+      type: object
+      required:
+        - kind
+        - title
+      properties:
+        kind:
+          $ref: "#/components/schemas/RequestKind"
+        title:
+          type: string
+          maxLength: 200
+          minLength: 1
+        details:
+          type: string
+          maxLength: 2000
+        neededBy:
+          type: string
+          format: date-time
+        hiddenFrom:
+          type: array
+          items:
+            type: string
+          description: For surprises. Hidden members never see the request.
+      additionalProperties: false
+    Decision:
+      type: object
+      required:
+        - decider
+        - verdict
+        - at
+        - via
+      properties:
+        decider:
+          type: string
+        verdict:
+          type: string
+          enum:
+            - approve
+            - decline
+            - needs_info
+        at:
+          type: string
+          format: date-time
+        via:
+          type: string
+          enum:
+            - session
+            - channel
+        note:
+          type: string
+          maxLength: 500
+        evidence:
+          $ref: "#/components/schemas/ChannelEvidence"
+    Request:
+      type: object
+      required:
+        - id
+        - kind
+        - title
+        - requester
+        - deciders
+        - policy
+        - status
+        - createdAt
+        - revision
+        - decisions
+      properties:
+        id:
+          type: string
+        kind:
+          $ref: "#/components/schemas/RequestKind"
+        title:
+          type: string
+        details:
+          type: string
+        requester:
+          type: string
+        deciders:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          description: Frozen at creation from the routing rules.
+        policy:
+          type: string
+          enum:
+            - either
+            - both
+        status:
+          $ref: "#/components/schemas/RequestStatus"
+        neededBy:
+          type:
+            - string
+            - "null"
+          format: date-time
+        hiddenFrom:
+          type: array
+          items:
+            type: string
+        decisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Decision"
+        createdAt:
+          type: string
+          format: date-time
+        revision:
+          type: integer
+    DecisionInput:
+      type: object
+      required:
+        - verdict
+        - revision
+      properties:
+        verdict:
+          type: string
+          enum:
+            - approve
+            - decline
+            - needs_info
+        note:
+          type: string
+          maxLength: 500
+        revision:
+          type: integer
+          minimum: 1
+      additionalProperties: false
+    ChannelEvidence:
+      type: object
+      required:
+        - channel
+        - senderId
+        - messageId
+      properties:
+        channel:
+          type: string
+          examples:
+            - chat-bot
+            - sms
+        senderId:
+          type: string
+          description: Sender id from the platform's signed callback, checked against the
+            decider's enrolled channel identity. Trusted only because the API
+            verified the platform signature itself.
+        messageId:
+          type: string
+    RoutingRules:
+      type: object
+      required:
+        - rules
+        - default
+        - revision
+      properties:
+        rules:
+          type: array
+          items:
+            type: object
+            required:
+              - deciders
+              - policy
+            properties:
+              fromRole:
+                $ref: "#/components/schemas/Role"
+              fromMember:
+                type: string
+              kind:
+                $ref: "#/components/schemas/RequestKind"
+              deciders:
+                type: array
+                items:
+                  type: string
+                minItems: 1
+              policy:
+                type: string
+                enum:
+                  - either
+                  - both
+        default:
+          type: object
+          required:
+            - deciders
+            - policy
+          properties:
+            deciders:
+              type: array
+              items:
+                type: string
+              minItems: 0
+              description: Empty only before operator configuration; PUT requires at least one
+                enabled parent.
+            policy:
+              type: string
+              enum:
+                - either
+                - both
+        revision:
+          type: integer
+          minimum: 1
+    AuditEntry:
+      type: object
+      required:
+        - at
+        - actor
+        - actorKind
+        - operationId
+        - outcome
+      properties:
+        at:
+          type: string
+          format: date-time
+        actor:
+          type: string
+        actorKind:
+          type: string
+          enum:
+            - person
+            - device
+            - service
+        operationId:
+          type: string
+        targetId:
+          type:
+            - string
+            - "null"
+        outcome:
+          type: string
+          enum:
+            - ok
+            - refused
+            - error
+        via:
+          type: string
+          enum:
+            - session
+            - channel
+            - device
+            - service
+        id:
+          type: integer
+    Mutation:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+    Answer:
+      type: object
+      additionalProperties: false
+      required:
+        - revision
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+        details:
+          type: string
+          maxLength: 2000

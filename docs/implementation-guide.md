@@ -1,8 +1,6 @@
 # Setup and implementation guide
 
-> **Status: blueprint.** This repository contains a specification, models, examples and checks. It does
-> **not** contain a server, and nothing here is deployed anywhere. Treat it as a design to implement in
-> your own private environment.
+> **Status:** v0.2.0 implements requests, approvals, routing and audit. Follow [self-hosting.md](self-hosting.md) to run it. This document describes how to implement the remaining blueprint domains; it is not a claim that they are already available.
 
 ## 0. Validate the blueprint
 

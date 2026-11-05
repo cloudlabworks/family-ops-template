@@ -12,7 +12,7 @@ const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclud
 
 const ALLOWED_EMAIL = /^(?:[0-9]+\+)?cloudlabworks@users\.noreply\.github\.com$|@example\.(?:com|org|invalid)$/i;
 const CHECKS = [
-  ["ipv4 address", /\b(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}\b/g, (m) => !/^0\.0\.0\.0$/.test(m)],
+  ["ipv4 address", /\b(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}\b/g, (m) => !/^(?:0\.0\.0\.0|127\.0\.0\.1)$/.test(m)],
   ["email address", /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, (m) => !ALLOWED_EMAIL.test(m)],
   ["phone number", /(?:\+?1[ .-]?)?\(?\b[2-9]\d{2}\)?[ .-]\d{3}[ .-]\d{4}\b/g, () => true],
   ["street address", /\b\d{2,6}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Court|Ct|Way|Boulevard|Blvd)\b\.?/g, () => true],
